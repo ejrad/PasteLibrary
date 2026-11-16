@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PasteLibrary</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <span class="brand-icon">📋</span>
+        <span class="brand-title">PasteLibrary</span>
+      </div>
+      <div class="header-actions">
+        <span id="rateLimitBadge" class="rate-badge" title="GitHub API Rate Limit">API: --/--</span>
+        <button id="toggleSettingsBtn" class="icon-btn" title="Settings & GitHub Token" aria-label="Settings">⚙️</button>
+      </div>
+    </header>
+
+    <!-- Settings Drawer (Collapsible) -->
+    <section id="settingsDrawer" class="settings-drawer collapsed">
+      <div class="settings-content">
+        <div class="setting-row">
+          <label for="tokenInput">GitHub Token (Optional):</label>
+          <div class="token-input-group">
+            <input type="password" id="tokenInput" placeholder="ghp_... (for private repos & 5,000 req/hr)">
+            <button id="saveTokenBtn" class="btn btn-secondary">Save</button>
+          </div>
+        </div>
+        <div class="setting-row checkbox-row">
+          <label>
+            <input type="checkbox" id="autoCopyCheckbox" checked>
+            <span>Automatically copy file text to clipboard when clicked</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Repo URL Input Bar -->
+    <section class="repo-bar">
+      <div class="input-wrapper">
+        <input 
+          type="text" 
+          id="repoUrlInput" 
+          placeholder="Enter GitHub repo link (e.g. owner/repo or https://github.com/...)" 
+          autocomplete="off" 
+          spellcheck="false"
+        >
+        <button id="loadRepoBtn" class="btn btn-primary">Browse</button>
+      </div>
+      <div id="recentChips" class="recent-chips"></div>
+    </section>
+
+    <!-- Breadcrumb & Path Bar -->
+    <nav class="breadcrumb-bar" id="breadcrumbBar" style="display: none;">
+      <button id="upDirBtn" class="btn btn-small" title="Go up one folder">⬆ Up</button>
+      <div id="breadcrumbList" class="breadcrumbs"></div>
+      <div class="filter-wrapper">
+        <input type="text" id="fileFilterInput" placeholder="Filter files..." class="filter-input">
+      </div>
+    </nav>
+
+    <!-- Explorer & Preview Split View -->
+    <main class="main-content">
+      <!-- File Explorer List -->
+      <section class="explorer-pane" id="explorerPane">
+        <div class="pane-header">
+          <span class="pane-title">Directory Items</span>
+          <span id="itemsCountBadge" class="count-badge">0 items</span>
+        </div>
+        <div id="fileListContainer" class="file-list-container">
+          <div class="empty-state">
+            <span class="empty-icon">📁</span>
+            <p>Enter a GitHub repository URL above to explore folders and files.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Code Preview & Copy Box -->
+      <section class="preview-pane" id="previewPane">
+        <div class="pane-header">
+          <div class="file-meta">
+            <span id="activeFileName" class="active-filename">No file selected</span>
+            <span id="activeFileMeta" class="active-meta"></span>
+          </div>
+          <div class="preview-actions">
+            <button id="highlightAllBtn" class="btn btn-small btn-secondary" title="Highlight/select all code in box" disabled>Select All</button>
+            <button id="copyCodeBtn" class="btn btn-small btn-primary" title="Copy code to clipboard" disabled>📋 Copy</button>
+          </div>
+        </div>
+        <div id="codeScrollBox" class="code-scroll-box">
+          <div class="empty-code-state">
+            <p>Click any text file on the left to preview and copy its contents.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Toast Notification -->
+    <div id="toastNotification" class="toast"></div>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
