@@ -17,6 +17,10 @@ A cross-browser extension (Chrome & Firefox Manifest V3) to input any GitHub rep
 - **Instant Clipboard Integration**:
   - Automatically copies the file content to clipboard on click (toggleable).
   - Manual "Copy" and "Select All" buttons with toast feedback.
+- **High Efficiency 1-Request Loading**:
+  - Fetches the entire repository structure in a single recursive tree call.
+  - Zero network requests when navigating folders (instant local indexing).
+  - Public file contents are fetched directly via raw CDN without exhausting the 60 req/hr API limit.
 - **Cross-Browser & Rate Limit Support**:
   - Compatible with Chrome and Firefox.
   - Displays remaining GitHub API rate limits.
@@ -45,6 +49,7 @@ pastelib/
 ├── modules/
 │   ├── fileTypes.js         # Text file whitelist & language detection
 │   ├── githubApi.js         # GitHub REST API client & URL parser
+│   ├── treeIndex.js         # In-memory instant folder & file tree indexing
 │   ├── clipboard.js         # Clipboard & text selection utilities
 │   ├── storage.js           # Cross-browser storage abstraction
 │   └── highlighter.js       # Safe syntax highlighting & line numbers

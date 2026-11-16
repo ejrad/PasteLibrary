@@ -6,10 +6,12 @@ import { isTextFile, detectLanguage, getFileExtension } from './modules/fileType
 import { 
   parseGitHubUrl, 
   fetchRepoInfo, 
+  fetchRepoTree,
   fetchDirectoryContents, 
   fetchFileContent,
   GitHubApiError 
 } from './modules/githubApi.js';
+import { buildTreeIndex, getItemsInPath } from './modules/treeIndex.js';
 import { loadSettings, saveSettings, addRecentRepo, saveSession, loadSession } from './modules/storage.js';
 import { copyToClipboard, selectElementText, showToast } from './modules/clipboard.js';
 import { renderCodeWithLineNumbers, escapeHtml } from './modules/highlighter.js';
@@ -24,6 +26,7 @@ const state = {
   currentItems: [],
   activeFile: null,
   activeContent: '',
+  treeIndex: null,
   settings: {
     lastRepoUrl: '',
     githubToken: '',
@@ -78,10 +81,25 @@ async function init() {
       state.activeFile = session.activeFile;
     }
 
-    await loadDirectory(state.currentPath, false);
+    try {
+      const treeResult = await fetchRepoTree({
+        owner: state.owner,
+        repo: state.repo,
+        ref: state.ref,
+        token: state.settings.githubToken
+      });
+      state.treeIndex = buildTreeIndex(treeResult.tree, isTextFile);
+      updateRateLimit(treeResult.rateLimit);
+      loadDirectoryFromIndex(state.currentPath, false);
 
-    if (session.activeFile) {
-      await selectFile(session.activeFile, true);
+      if (session.activeFile) {
+        await selectFile(session.activeFile, true);
+      }
+    } catch (err) {
+      await loadDirectory(state.currentPath, false);
+      if (session.activeFile) {
+        await selectFile(session.activeFile, true);
+      }
     }
   } else if (state.settings.lastRepoUrl) {
     elements.repoUrlInput.value = state.settings.lastRepoUrl;
@@ -163,7 +181,7 @@ async function loadRepository(input) {
     elements.fileListContainer.innerHTML = `
       <div class="empty-state">
         <span class="empty-icon">⏳</span>
-        <p>Loading repository contents...</p>
+        <p>Fetching repository tree (1 request)...</p>
       </div>
     `;
 
@@ -187,7 +205,22 @@ async function loadRepository(input) {
     state.settings.recentRepos = (await loadSettings()).recentRepos;
     renderRecentChips();
 
-    await loadDirectory(state.currentPath);
+    // 1 single request to fetch the entire repository tree
+    try {
+      const treeResult = await fetchRepoTree({
+        owner: state.owner,
+        repo: state.repo,
+        ref: state.ref,
+        token: state.settings.githubToken
+      });
+      state.treeIndex = buildTreeIndex(treeResult.tree, isTextFile);
+      updateRateLimit(treeResult.rateLimit);
+
+      loadDirectoryFromIndex(state.currentPath, true);
+    } catch (treeErr) {
+      // Fallback if git tree API fails (e.g. empty repo)
+      await loadDirectory(state.currentPath, true);
+    }
   } catch (err) {
     showToast(elements.toast, err.message, 'error');
     elements.fileListContainer.innerHTML = `
@@ -200,9 +233,41 @@ async function loadRepository(input) {
 }
 
 /**
+ * Loads directory items instantly from local tree index with zero API calls.
+ */
+function loadDirectoryFromIndex(path, clearActive = true) {
+  state.currentPath = path;
+  if (clearActive) {
+    state.activeFile = null;
+    elements.activeFileName.textContent = 'No file selected';
+    elements.activeFileMeta.textContent = '';
+    elements.copyCodeBtn.disabled = true;
+    elements.highlightAllBtn.disabled = true;
+    elements.codeScrollBox.innerHTML = `
+      <div class="empty-code-state">
+        <p>Click any text file on the left to preview and copy its contents.</p>
+      </div>
+    `;
+  }
+  elements.fileFilterInput.value = '';
+
+  const items = getItemsInPath(state.treeIndex, state.currentPath);
+  state.currentItems = items;
+  renderDirectoryItems(items);
+  renderBreadcrumbs();
+  elements.breadcrumbBar.style.display = 'flex';
+  persistCurrentSession();
+}
+
+/**
  * Loads directory contents for given path.
  */
 async function loadDirectory(path, clearActive = true) {
+  if (state.treeIndex) {
+    loadDirectoryFromIndex(path, clearActive);
+    return;
+  }
+
   state.currentPath = path;
   if (clearActive) {
     state.activeFile = null;

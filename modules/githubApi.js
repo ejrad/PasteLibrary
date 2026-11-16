@@ -125,6 +125,28 @@ export async function fetchRepoInfo({ owner, repo, token = null }) {
 }
 
 /**
+ * Fetches the entire repository tree in 1 single request via Git Trees API.
+ * @param {{ owner: string, repo: string, ref: string, token?: string }} params
+ * @returns {Promise<{ tree: Array, truncated: boolean, rateLimit: object|null }>}
+ */
+export async function fetchRepoTree({ owner, repo, ref = 'main', token = null }) {
+  const endpoint = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
+  const res = await fetch(endpoint, { headers: buildHeaders(token) });
+  const rateLimit = extractRateLimit(res);
+
+  if (!res.ok) {
+    handleHttpError(res, rateLimit);
+  }
+
+  const data = await res.json();
+  return {
+    tree: data.tree || [],
+    truncated: Boolean(data.truncated),
+    rateLimit
+  };
+}
+
+/**
  * Fetches items inside a folder/path.
  * @param {{ owner: string, repo: string, path?: string, ref?: string, token?: string }} params
  * @returns {Promise<{ items: Array, rateLimit: object|null }>}
