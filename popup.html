@@ -1,108 +1,89 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PasteLibrary</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="app-container">
-    <!-- Header -->
-    <header class="app-header">
-      <div class="header-brand">
-        <span class="brand-icon">📋</span>
-        <span class="brand-title">PasteLibrary</span>
+  <div class="app-layout">
+    <header>
+      <div class="pl-header-brand">
+        <svg class="pl-brand-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+        <h1>PasteLibrary</h1>
       </div>
-      <div class="header-actions">
-        <span id="rateLimitBadge" class="rate-badge" title="GitHub API Rate Limit">API: --/--</span>
-        <button id="toggleSettingsBtn" class="icon-btn" title="Settings & GitHub Token" aria-label="Settings">⚙️</button>
+      <div class="pl-header-actions">
+        <span id="rateLimitBadge" class="pl-badge" title="GitHub API Rate Limit">API: --/--</span>
+        <button id="toggleSettingsBtn" class="pl-icon-btn" title="Settings" aria-label="Settings">⚙</button>
       </div>
     </header>
-
-    <!-- Settings Drawer (Collapsible) -->
-    <section id="settingsDrawer" class="settings-drawer collapsed">
-      <div class="settings-content">
-        <div class="setting-row">
-          <label for="tokenInput">GitHub Token (Optional):</label>
-          <div class="token-input-group">
-            <input type="password" id="tokenInput" placeholder="ghp_... (for private repos & 5,000 req/hr)">
-            <button id="saveTokenBtn" class="btn btn-secondary">Save</button>
+    <main class="pl-main">
+      <!-- Settings Drawer -->
+      <div id="settingsDrawer" class="pl-settings-drawer" hidden>
+        <div class="pl-setting-row">
+          <label for="tokenInput">GitHub Token (Optional)</label>
+          <div class="pl-input-group">
+            <input type="password" id="tokenInput" placeholder="ghp_... (private repos & higher limits)">
+            <button id="saveTokenBtn" type="button">Save</button>
           </div>
         </div>
-        <div class="setting-row checkbox-row">
+        <div class="pl-setting-row pl-checkbox-row">
           <label>
             <input type="checkbox" id="autoCopyCheckbox" checked>
-            <span>Automatically copy file text to clipboard when clicked</span>
+            <span>Auto-copy file text on click</span>
           </label>
         </div>
       </div>
-    </section>
 
-    <!-- Repo URL Input Bar -->
-    <section class="repo-bar">
-      <div class="input-wrapper">
-        <input 
-          type="text" 
-          id="repoUrlInput" 
-          placeholder="Enter GitHub repo link (e.g. owner/repo or https://github.com/...)" 
-          autocomplete="off" 
-          spellcheck="false"
-        >
-        <button id="loadRepoBtn" class="btn btn-primary">Browse</button>
+      <!-- Repo input bar -->
+      <div class="pl-repo-bar">
+        <div class="pl-input-group">
+          <input type="text" id="repoUrlInput" placeholder="owner/repo or GitHub URL" autocomplete="off" spellcheck="false">
+          <button id="loadRepoBtn" class="pl-primary-btn" type="button">Browse</button>
+        </div>
+        <div id="recentChips" class="pl-chips"></div>
       </div>
-      <div id="recentChips" class="recent-chips"></div>
-    </section>
 
-    <!-- Breadcrumb & Path Bar -->
-    <nav class="breadcrumb-bar" id="breadcrumbBar" style="display: none;">
-      <button id="upDirBtn" class="btn btn-small" title="Go up one folder">⬆ Up</button>
-      <div id="breadcrumbList" class="breadcrumbs"></div>
-      <div class="filter-wrapper">
-        <input type="text" id="fileFilterInput" placeholder="Filter files..." class="filter-input">
+      <!-- Breadcrumbs / Navigation -->
+      <div class="pl-nav-bar" id="breadcrumbBar" hidden>
+        <button id="upDirBtn" class="pl-small-btn" type="button" title="Go up one folder">⬆ Up</button>
+        <div id="breadcrumbList" class="pl-breadcrumbs"></div>
+        <input type="text" id="fileFilterInput" placeholder="Filter..." class="pl-filter-input">
       </div>
-    </nav>
 
-    <!-- Explorer & Preview Split View -->
-    <main class="main-content">
-      <!-- File Explorer List -->
-      <section class="explorer-pane" id="explorerPane">
-        <div class="pane-header">
-          <span class="pane-title">Directory Items</span>
-          <span id="itemsCountBadge" class="count-badge">0 items</span>
+      <!-- Directory Items -->
+      <div class="pl-section-header">
+        <span class="pl-section-title">Directory Items</span>
+        <span id="itemsCountBadge" class="pl-count-badge">0 items</span>
+      </div>
+      <div id="fileListContainer" class="pl-file-list">
+        <div class="pl-empty-state">
+          <p>Enter a GitHub repository above to browse files.</p>
         </div>
-        <div id="fileListContainer" class="file-list-container">
-          <div class="empty-state">
-            <span class="empty-icon">📁</span>
-            <p>Enter a GitHub repository URL above to explore folders and files.</p>
-          </div>
-        </div>
-      </section>
+      </div>
 
-      <!-- Code Preview & Copy Box -->
-      <section class="preview-pane" id="previewPane">
-        <div class="pane-header">
-          <div class="file-meta">
-            <span id="activeFileName" class="active-filename">No file selected</span>
-            <span id="activeFileMeta" class="active-meta"></span>
-          </div>
-          <div class="preview-actions">
-            <button id="highlightAllBtn" class="btn btn-small btn-secondary" title="Highlight/select all code in box" disabled>Select All</button>
-            <button id="copyCodeBtn" class="btn btn-small btn-primary" title="Copy code to clipboard" disabled>📋 Copy</button>
-          </div>
+      <!-- Preview Pane -->
+      <div class="pl-section-header pl-preview-header">
+        <div class="pl-file-meta">
+          <span id="activeFileName" class="pl-filename">No file selected</span>
+          <span id="activeFileMeta" class="pl-meta"></span>
         </div>
-        <div id="codeScrollBox" class="code-scroll-box">
-          <div class="empty-code-state">
-            <p>Click any text file on the left to preview and copy its contents.</p>
-          </div>
+        <div class="pl-preview-actions">
+          <button id="highlightAllBtn" class="pl-small-btn" type="button" title="Select all" disabled>Select</button>
+          <button id="copyCodeBtn" class="pl-small-btn pl-primary-btn" type="button" title="Copy code" disabled>Copy</button>
         </div>
-      </section>
+      </div>
+      <div id="codeScrollBox" class="pl-code-box">
+        <div class="pl-empty-state">
+          <p>Click a text file above to preview and copy its contents.</p>
+        </div>
+      </div>
+
+      <!-- Toast notification -->
+      <p id="plToast" class="notice pl-toast" role="status" hidden></p>
     </main>
-
-    <!-- Toast Notification -->
-    <div id="toastNotification" class="toast"></div>
   </div>
-
   <script type="module" src="popup.js"></script>
 </body>
 </html>

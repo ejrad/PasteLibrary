@@ -48,7 +48,7 @@ export function parseGitHubUrl(input) {
     throw new GitHubApiError('Please enter a GitHub repository URL or owner/repo.');
   }
 
-  const clean = input.trim().replace(/\.git$/i, '');
+  const clean = input.trim().replace(/\/+$/, '').replace(/\.git$/i, '').replace(/\/+$/, '');
 
   // Format: owner/repo
   if (/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(clean)) {
@@ -218,7 +218,8 @@ export async function fetchFileContent({ owner, repo, path, ref = '', downloadUr
   }
 
   // Fallback: use downloadUrl or direct raw endpoint
-  const targetUrl = downloadUrl || `https://raw.githubusercontent.com/${owner}/${repo}/${ref || 'main'}/${path}`;
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+  const targetUrl = downloadUrl || `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(ref || 'main')}/${encodedPath}`;
   const res = await fetch(targetUrl);
   const rateLimit = extractRateLimit(res);
 

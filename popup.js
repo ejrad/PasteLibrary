@@ -3,26 +3,23 @@
  */
 
 import { isTextFile, detectLanguage, getFileExtension } from './modules/fileTypes.js';
-import { 
-  parseGitHubUrl, 
-  fetchRepoInfo, 
+import {
+  parseGitHubUrl,
+  fetchRepoInfo,
   fetchRepoTree,
-  fetchDirectoryContents, 
-  fetchFileContent,
-  GitHubApiError 
+  fetchDirectoryContents,
+  fetchFileContent
 } from './modules/githubApi.js';
 import { buildTreeIndex, getItemsInPath } from './modules/treeIndex.js';
 import { loadSettings, saveSettings, addRecentRepo, saveSession, loadSession } from './modules/storage.js';
-import { copyToClipboard, selectElementText, showToast } from './modules/clipboard.js';
+import { copyToClipboard, selectElementText } from './modules/clipboard.js';
 import { renderCodeWithLineNumbers, escapeHtml } from './modules/highlighter.js';
 
-// Application State
 const state = {
   owner: '',
   repo: '',
   ref: '',
   currentPath: '',
-  pathHistory: [],
   currentItems: [],
   activeFile: null,
   activeContent: '',
@@ -35,7 +32,6 @@ const state = {
   }
 };
 
-// DOM Elements
 const elements = {
   repoUrlInput: document.getElementById('repoUrlInput'),
   loadRepoBtn: document.getElementById('loadRepoBtn'),
@@ -57,11 +53,23 @@ const elements = {
   codeScrollBox: document.getElementById('codeScrollBox'),
   copyCodeBtn: document.getElementById('copyCodeBtn'),
   highlightAllBtn: document.getElementById('highlightAllBtn'),
-  toast: document.getElementById('toastNotification')
+  toast: document.getElementById('plToast')
 };
 
-// Initialize App
+let toastTimer = null;
+function showNotice(msg, isError = false) {
+  if (!elements.toast) return;
+  elements.toast.hidden = false;
+  elements.toast.className = `notice pl-toast ${isError ? 'error' : 'success'}`;
+  elements.toast.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    elements.toast.hidden = true;
+  }, 2800);
+}
+
 async function init() {
+  if (!elements.repoUrlInput) return;
   state.settings = await loadSettings();
   elements.tokenInput.value = state.settings.githubToken || '';
   elements.autoCopyCheckbox.checked = state.settings.autoCopy !== false;
@@ -69,7 +77,6 @@ async function init() {
   renderRecentChips();
   attachEventListeners();
 
-  // Restore previous session if present
   const session = await loadSession();
   if (session && session.owner && session.repo) {
     elements.repoUrlInput.value = session.repoInput || `https://github.com/${session.owner}/${session.repo}`;
@@ -77,9 +84,7 @@ async function init() {
     state.repo = session.repo;
     state.ref = session.ref || 'main';
     state.currentPath = session.currentPath || '';
-    if (session.activeFile) {
-      state.activeFile = session.activeFile;
-    }
+    if (session.activeFile) state.activeFile = session.activeFile;
 
     try {
       const treeResult = await fetchRepoTree({
@@ -95,7 +100,7 @@ async function init() {
       if (session.activeFile) {
         await selectFile(session.activeFile, true);
       }
-    } catch (err) {
+    } catch {
       await loadDirectory(state.currentPath, false);
       if (session.activeFile) {
         await selectFile(session.activeFile, true);
@@ -106,9 +111,6 @@ async function init() {
   }
 }
 
-/**
- * Persists current navigation place (repo, folder, active file).
- */
 function persistCurrentSession() {
   if (!state.owner || !state.repo) return;
   saveSession({
@@ -128,23 +130,21 @@ function persistCurrentSession() {
 }
 
 function attachEventListeners() {
-  // Repo load
   elements.loadRepoBtn.addEventListener('click', () => loadRepository(elements.repoUrlInput.value));
   elements.repoUrlInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') loadRepository(elements.repoUrlInput.value);
   });
 
-  // Settings
   elements.toggleSettingsBtn.addEventListener('click', () => {
-    elements.settingsDrawer.classList.toggle('collapsed');
+    elements.settingsDrawer.hidden = !elements.settingsDrawer.hidden;
   });
 
   elements.saveTokenBtn.addEventListener('click', async () => {
     const token = elements.tokenInput.value.trim();
     await saveSettings({ githubToken: token });
     state.settings.githubToken = token;
-    showToast(elements.toast, 'Token saved!', 'success');
-    elements.settingsDrawer.classList.add('collapsed');
+    showNotice('GitHub token saved.');
+    elements.settingsDrawer.hidden = true;
   });
 
   elements.autoCopyCheckbox.addEventListener('change', async (e) => {
@@ -153,21 +153,16 @@ function attachEventListeners() {
     state.settings.autoCopy = autoCopy;
   });
 
-  // Navigation
   elements.upDirBtn.addEventListener('click', navigateUp);
   elements.fileFilterInput.addEventListener('input', () => filterItems(elements.fileFilterInput.value));
 
-  // Preview Actions
   elements.copyCodeBtn.addEventListener('click', handleManualCopy);
   elements.highlightAllBtn.addEventListener('click', handleHighlightAll);
 }
 
-/**
- * Loads a GitHub repository from input.
- */
 async function loadRepository(input) {
   if (!input || !input.trim()) {
-    showToast(elements.toast, 'Please enter a repository URL.', 'error');
+    showNotice('Enter a repository URL or owner/repo.', true);
     return;
   }
 
@@ -179,24 +174,21 @@ async function loadRepository(input) {
     state.ref = parsed.ref || '';
 
     elements.fileListContainer.innerHTML = `
-      <div class="empty-state">
-        <span class="empty-icon">⏳</span>
-        <p>Fetching repository tree (1 request)...</p>
+      <div class="pl-empty-state">
+        <p>Loading tree index...</p>
       </div>
     `;
 
-    // Fetch repository default branch if not specified
     if (!state.ref) {
       try {
-        const repoInfo = await fetchRepoInfo({ 
-          owner: state.owner, 
-          repo: state.repo, 
-          token: state.settings.githubToken 
+        const repoInfo = await fetchRepoInfo({
+          owner: state.owner,
+          repo: state.repo,
+          token: state.settings.githubToken
         });
         state.ref = repoInfo.defaultBranch;
         updateRateLimit(repoInfo.rateLimit);
-      } catch (err) {
-        // Fallback default
+      } catch {
         state.ref = 'main';
       }
     }
@@ -205,7 +197,6 @@ async function loadRepository(input) {
     state.settings.recentRepos = (await loadSettings()).recentRepos;
     renderRecentChips();
 
-    // 1 single request to fetch the entire repository tree
     try {
       const treeResult = await fetchRepoTree({
         owner: state.owner,
@@ -215,37 +206,32 @@ async function loadRepository(input) {
       });
       state.treeIndex = buildTreeIndex(treeResult.tree, isTextFile);
       updateRateLimit(treeResult.rateLimit);
-
       loadDirectoryFromIndex(state.currentPath, true);
-    } catch (treeErr) {
-      // Fallback if git tree API fails (e.g. empty repo)
+    } catch {
       await loadDirectory(state.currentPath, true);
     }
   } catch (err) {
-    showToast(elements.toast, err.message, 'error');
+    showNotice(err.message, true);
     elements.fileListContainer.innerHTML = `
-      <div class="empty-state">
-        <span class="empty-icon">⚠️</span>
+      <div class="pl-empty-state">
         <p>${escapeHtml(err.message)}</p>
       </div>
     `;
   }
 }
 
-/**
- * Loads directory items instantly from local tree index with zero API calls.
- */
 function loadDirectoryFromIndex(path, clearActive = true) {
   state.currentPath = path;
   if (clearActive) {
     state.activeFile = null;
+    state.activeContent = '';
     elements.activeFileName.textContent = 'No file selected';
     elements.activeFileMeta.textContent = '';
     elements.copyCodeBtn.disabled = true;
     elements.highlightAllBtn.disabled = true;
     elements.codeScrollBox.innerHTML = `
-      <div class="empty-code-state">
-        <p>Click any text file on the left to preview and copy its contents.</p>
+      <div class="pl-empty-state">
+        <p>Click a text file above to preview and copy its contents.</p>
       </div>
     `;
   }
@@ -255,13 +241,10 @@ function loadDirectoryFromIndex(path, clearActive = true) {
   state.currentItems = items;
   renderDirectoryItems(items);
   renderBreadcrumbs();
-  elements.breadcrumbBar.style.display = 'flex';
+  elements.breadcrumbBar.hidden = false;
   persistCurrentSession();
 }
 
-/**
- * Loads directory contents for given path.
- */
 async function loadDirectory(path, clearActive = true) {
   if (state.treeIndex) {
     loadDirectoryFromIndex(path, clearActive);
@@ -271,22 +254,22 @@ async function loadDirectory(path, clearActive = true) {
   state.currentPath = path;
   if (clearActive) {
     state.activeFile = null;
+    state.activeContent = '';
     elements.activeFileName.textContent = 'No file selected';
     elements.activeFileMeta.textContent = '';
     elements.copyCodeBtn.disabled = true;
     elements.highlightAllBtn.disabled = true;
     elements.codeScrollBox.innerHTML = `
-      <div class="empty-code-state">
-        <p>Click any text file on the left to preview and copy its contents.</p>
+      <div class="pl-empty-state">
+        <p>Click a text file above to preview and copy its contents.</p>
       </div>
     `;
   }
   elements.fileFilterInput.value = '';
 
   elements.fileListContainer.innerHTML = `
-    <div class="empty-state">
-      <span class="empty-icon">⏳</span>
-      <p>Loading directory items...</p>
+    <div class="pl-empty-state">
+      <p>Loading directory...</p>
     </div>
   `;
 
@@ -302,19 +285,16 @@ async function loadDirectory(path, clearActive = true) {
     updateRateLimit(result.rateLimit);
 
     if (result.isFile) {
-      // Single file view
       await selectFile(result.items[0]);
       return;
     }
 
-    // Filter: keep folders + whitelisted text files
     const validItems = result.items.filter(item => {
       if (item.type === 'dir') return true;
       if (item.type === 'file') return isTextFile(item.name);
       return false;
     });
 
-    // Sort: directories first, then alphabetical
     validItems.sort((a, b) => {
       if (a.type === 'dir' && b.type !== 'dir') return -1;
       if (a.type !== 'dir' && b.type === 'dir') return 1;
@@ -324,30 +304,25 @@ async function loadDirectory(path, clearActive = true) {
     state.currentItems = validItems;
     renderDirectoryItems(validItems);
     renderBreadcrumbs();
-    elements.breadcrumbBar.style.display = 'flex';
+    elements.breadcrumbBar.hidden = false;
     persistCurrentSession();
   } catch (err) {
-    showToast(elements.toast, err.message, 'error');
+    showNotice(err.message, true);
     elements.fileListContainer.innerHTML = `
-      <div class="empty-state">
-        <span class="empty-icon">⚠️</span>
+      <div class="pl-empty-state">
         <p>${escapeHtml(err.message)}</p>
       </div>
     `;
   }
 }
 
-/**
- * Renders filtered or full list of items in the explorer pane.
- */
 function renderDirectoryItems(items) {
-  elements.itemsCountBadge.textContent = `${items.length} items`;
+  elements.itemsCountBadge.textContent = `${items.length} ${items.length === 1 ? 'item' : 'items'}`;
 
   if (items.length === 0) {
     elements.fileListContainer.innerHTML = `
-      <div class="empty-state">
-        <span class="empty-icon">📄</span>
-        <p>No folders or matching text files found in this directory.</p>
+      <div class="pl-empty-state">
+        <p>No matching folders or text files found.</p>
       </div>
     `;
     return;
@@ -357,7 +332,7 @@ function renderDirectoryItems(items) {
 
   items.forEach(item => {
     const row = document.createElement('div');
-    row.className = `file-item ${item.type === 'dir' ? 'folder-item' : 'code-file-item'}`;
+    row.className = `pl-file-item ${item.type === 'dir' ? 'is-dir' : 'is-file'}`;
     row.dataset.path = item.path;
 
     if (state.activeFile && state.activeFile.path === item.path) {
@@ -365,11 +340,10 @@ function renderDirectoryItems(items) {
     }
 
     const iconSpan = document.createElement('span');
-    iconSpan.className = 'item-icon';
     iconSpan.textContent = item.type === 'dir' ? '📁' : '📄';
 
     const nameSpan = document.createElement('span');
-    nameSpan.className = 'item-name';
+    nameSpan.className = 'pl-item-name';
     nameSpan.textContent = item.name;
 
     row.appendChild(iconSpan);
@@ -379,7 +353,7 @@ function renderDirectoryItems(items) {
       const ext = getFileExtension(item.name);
       if (ext) {
         const badge = document.createElement('span');
-        badge.className = 'file-badge';
+        badge.className = 'pl-file-badge';
         badge.textContent = ext;
         row.appendChild(badge);
       }
@@ -389,7 +363,7 @@ function renderDirectoryItems(items) {
       if (item.type === 'dir') {
         loadDirectory(item.path, true);
       } else {
-        document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
+        document.querySelectorAll('.pl-file-item').forEach(el => el.classList.remove('selected'));
         row.classList.add('selected');
         selectFile(item, false);
       }
@@ -399,9 +373,6 @@ function renderDirectoryItems(items) {
   });
 }
 
-/**
- * Filters current items by query.
- */
 function filterItems(query) {
   if (!query || !query.trim()) {
     renderDirectoryItems(state.currentItems);
@@ -412,9 +383,6 @@ function filterItems(query) {
   renderDirectoryItems(filtered);
 }
 
-/**
- * Handles selection, preview, syntax highlighting, and auto-copy of a text file.
- */
 async function selectFile(item, isRestoring = false) {
   state.activeFile = item;
   elements.activeFileName.textContent = item.name;
@@ -422,14 +390,13 @@ async function selectFile(item, isRestoring = false) {
   elements.copyCodeBtn.disabled = true;
   elements.highlightAllBtn.disabled = true;
 
-  // Highlight in explorer list if rendered
-  document.querySelectorAll('.file-item').forEach(el => {
+  document.querySelectorAll('.pl-file-item').forEach(el => {
     el.classList.toggle('selected', el.dataset.path === item.path);
   });
 
   elements.codeScrollBox.innerHTML = `
-    <div class="empty-code-state">
-      <p>Fetching file contents...</p>
+    <div class="pl-empty-state">
+      <p>Fetching content...</p>
     </div>
   `;
 
@@ -455,27 +422,25 @@ async function selectFile(item, isRestoring = false) {
     elements.copyCodeBtn.disabled = false;
     elements.highlightAllBtn.disabled = false;
 
-    // Highlight text in the code element
     const codeElement = elements.codeScrollBox.querySelector('.code-body code');
     if (codeElement) {
       selectElementText(codeElement);
     }
 
-    // Auto-copy to clipboard if enabled (and not passively restoring)
     if (state.settings.autoCopy && !isRestoring) {
       const copied = await copyToClipboard(content);
       if (copied) {
-        showToast(elements.toast, `✓ Copied "${item.name}" to clipboard!`, 'success');
+        showNotice(`✓ Copied "${item.name}" to clipboard!`);
       } else {
-        showToast(elements.toast, 'Loaded file. Click Copy button to copy.', 'info');
+        showNotice('Loaded file. Click Copy to copy.');
       }
     }
 
     persistCurrentSession();
   } catch (err) {
-    showToast(elements.toast, `Failed to load file: ${err.message}`, 'error');
+    showNotice(`Failed to load file: ${err.message}`, true);
     elements.codeScrollBox.innerHTML = `
-      <div class="empty-code-state">
+      <div class="pl-empty-state">
         <p>⚠️ Error: ${escapeHtml(err.message)}</p>
       </div>
     `;
@@ -483,39 +448,29 @@ async function selectFile(item, isRestoring = false) {
   }
 }
 
-/**
- * Manual copy button click.
- */
 async function handleManualCopy() {
   if (!state.activeContent) return;
   const copied = await copyToClipboard(state.activeContent);
   if (copied) {
-    showToast(elements.toast, '✓ Copied to clipboard!', 'success');
+    showNotice('✓ Copied to clipboard!');
   } else {
-    showToast(elements.toast, 'Could not copy to clipboard.', 'error');
+    showNotice('Could not copy to clipboard.', true);
   }
 }
 
-/**
- * Highlight / Select All in code preview box.
- */
 function handleHighlightAll() {
   const codeElement = elements.codeScrollBox.querySelector('.code-body code');
   if (codeElement) {
     selectElementText(codeElement);
-    showToast(elements.toast, 'Text selected', 'info', 1500);
+    showNotice('Code selected.');
   }
 }
 
-/**
- * Breadcrumbs rendering.
- */
 function renderBreadcrumbs() {
   elements.breadcrumbList.innerHTML = '';
 
-  // Root crumb
   const rootCrumb = document.createElement('span');
-  rootCrumb.className = `breadcrumb-item ${!state.currentPath ? 'active' : ''}`;
+  rootCrumb.className = `pl-crumb ${!state.currentPath ? 'active' : ''}`;
   rootCrumb.textContent = 'Root';
   rootCrumb.addEventListener('click', () => {
     if (state.currentPath) loadDirectory('', true);
@@ -532,12 +487,12 @@ function renderBreadcrumbs() {
     const isLast = index === parts.length - 1;
 
     const sep = document.createElement('span');
-    sep.className = 'breadcrumb-separator';
+    sep.className = 'pl-separator';
     sep.textContent = '/';
     elements.breadcrumbList.appendChild(sep);
 
     const crumb = document.createElement('span');
-    crumb.className = `breadcrumb-item ${isLast ? 'active' : ''}`;
+    crumb.className = `pl-crumb ${isLast ? 'active' : ''}`;
     crumb.textContent = part;
 
     if (!isLast) {
@@ -549,9 +504,6 @@ function renderBreadcrumbs() {
   });
 }
 
-/**
- * Navigate to parent directory.
- */
 function navigateUp() {
   if (!state.currentPath) return;
   const parts = state.currentPath.split('/');
@@ -559,15 +511,12 @@ function navigateUp() {
   loadDirectory(parts.join('/'), true);
 }
 
-/**
- * Renders recent repo shortcut chips.
- */
 function renderRecentChips() {
   elements.recentChips.innerHTML = '';
   const repos = state.settings.recentRepos || [];
-  repos.slice(0, 4).forEach(repoUrl => {
+  repos.slice(0, 3).forEach(repoUrl => {
     const chip = document.createElement('span');
-    chip.className = 'recent-chip';
+    chip.className = 'pl-chip';
     chip.textContent = repoUrl.replace(/^https?:\/\/github\.com\//i, '');
     chip.title = repoUrl;
     chip.addEventListener('click', () => {
@@ -578,23 +527,17 @@ function renderRecentChips() {
   });
 }
 
-/**
- * Updates rate limit badge in header.
- */
 function updateRateLimit(rateLimit) {
   if (!rateLimit) return;
   elements.rateLimitBadge.textContent = `API: ${rateLimit.remaining}/${rateLimit.limit}`;
   if (rateLimit.remaining <= 5) {
-    elements.rateLimitBadge.style.color = '#ef4444';
+    elements.rateLimitBadge.style.color = 'var(--error)';
     elements.rateLimitBadge.title = `Low API rate limit remaining! Resets at ${rateLimit.resetDate?.toLocaleTimeString()}`;
   } else {
-    elements.rateLimitBadge.style.color = 'var(--text-muted)';
+    elements.rateLimitBadge.style.color = 'var(--muted)';
   }
 }
 
-/**
- * Formats byte size.
- */
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
   const k = 1024;
@@ -603,5 +546,8 @@ function formatBytes(bytes) {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
-// Start
-document.addEventListener('DOMContentLoaded', init);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
