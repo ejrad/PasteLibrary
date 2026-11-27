@@ -1,58 +1,24 @@
-# PasteLibrary 📋
+# PasteLibrary
 
-A cross-browser extension (Chrome & Firefox Manifest V3) to input any GitHub repository, browse folders and whitelisted text files, preview with syntax highlighting, and automatically copy code to your clipboard.
+A cross-browser extension (Chrome and Firefox, Manifest V3) for browsing GitHub repositories, previewing text files, and copying code directly to your clipboard.
 
 ## Features
 
-- **GitHub Repo Input**: Paste any GitHub repo URL (`https://github.com/owner/repo`, tree/branch URLs, or `owner/repo`).
-- **Interactive Directory Explorer**:
-  - Traverses folders with breadcrumb navigation and parent folder shortcut.
-  - Whitelists only text files (over 100+ code, markup, config, and plain text formats).
-  - Filters out binary, image, and archive files.
-  - Search filter to quickly locate files in the current folder.
-- **Scrollable Code Preview**:
-  - Syntax highlighting for code, configs, and markup.
-  - Line numbers gutter.
-  - Automatic code text selection/highlighting on file click.
-- **Instant Clipboard Integration**:
-  - Automatically copies the file content to clipboard on click (toggleable).
-  - Manual "Copy" and "Select All" buttons with toast feedback.
-- **High Efficiency 1-Request Loading**:
-  - Fetches the entire repository structure in a single recursive tree call.
-  - Zero network requests when navigating folders (instant local indexing).
-  - Public file contents are fetched directly via raw CDN without exhausting the 60 req/hr API limit.
-- **Cross-Browser & Rate Limit Support**:
-  - Compatible with Chrome and Firefox.
-  - Displays remaining GitHub API rate limits.
-  - Optional Personal Access Token (PAT) support for private repositories and higher rate limits (5,000 req/hr).
+- **Single-request tree loading**: Accepts `owner/repo` shorthands or full GitHub URLs (including branch and subfolder links). Loads the repository tree in one Git Trees API call, so folder navigation runs locally with zero extra API requests. Public file contents are fetched from `raw.githubusercontent.com` without consuming the 60 req/hr REST API quota.
+- **Text file whitelist**: Lists folders alongside text files (code, configs, markdown, shell scripts, dotfiles) and filters out binaries, images, and archives. Includes an instant filter box for the current folder.
+- **Code blocks as files**: Files containing fenced code blocks (` ``` ` or `~~~`) act as both a file and a folder. Click the row to preview and copy the full file, or click the `📂` button to open it as a folder listing each code block on its own. Isolated headings or labels directly above a block (such as `Elevated PowerShell:` or `### Linux Setup`) become that block's title.
+- **Syntax-highlighted preview and auto-copy**: Displays line numbers and syntax highlighting in a scrollable viewer, selects the text, and copies it to your clipboard on click (toggleable in settings).
+- **Session persistence**: Saves your repository, current folder (including virtual code-block folders), and selected file when the popup closes so you pick up in the same spot.
+- **Optional GitHub token**: Add a Personal Access Token in settings (⚙) for private repositories and a 5,000 req/hr API limit.
 
 ## Installation
 
-### Google Chrome / Chromium / Edge / Brave
-1. Go to `chrome://extensions`.
-2. Enable **Developer mode** (top right toggle).
-3. Click **Load unpacked** and select this directory (`pastelib`).
+### Chrome, Edge, and Brave
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode**.
+3. Click **Load unpacked** and select this folder.
 
-### Mozilla Firefox
-1. Go to `about:debugging#/runtime/this-firefox`.
+### Firefox
+1. Open `about:debugging#/runtime/this-firefox`.
 2. Click **Load Temporary Add-on...**.
-3. Select `manifest.json` in this directory (`pastelib`).
-
-## Project Architecture
-
-```
-pastelib/
-├── manifest.json            # Cross-browser Manifest V3 config
-├── popup.html               # Popup view layout
-├── popup.css                # Dark developer theme styling
-├── popup.js                 # Popup controller & state management
-├── modules/
-│   ├── fileTypes.js         # Text file whitelist & language detection
-│   ├── githubApi.js         # GitHub REST API client & URL parser
-│   ├── treeIndex.js         # In-memory instant folder & file tree indexing
-│   ├── clipboard.js         # Clipboard & text selection utilities
-│   ├── storage.js           # Cross-browser storage abstraction
-│   └── highlighter.js       # Safe syntax highlighting & line numbers
-├── icons/                   # Extension icons (16, 48, 128)
-└── tests/                   # Module tests
-```
+3. Select `manifest.json` in this folder.

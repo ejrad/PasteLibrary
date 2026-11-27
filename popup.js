@@ -11,9 +11,12 @@ import {
   fetchFileContent
 } from './modules/githubApi.js';
 import { buildTreeIndex, getItemsInPath } from './modules/treeIndex.js';
+import { extractCodeBlocks } from './modules/codeBlocks.js';
 import { loadSettings, saveSettings, addRecentRepo, saveSession, loadSession } from './modules/storage.js';
 import { copyToClipboard, selectElementText } from './modules/clipboard.js';
 import { renderCodeWithLineNumbers, escapeHtml } from './modules/highlighter.js';
+
+const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkdn', 'mdx']);
 
 const state = {
   owner: '',
@@ -24,6 +27,8 @@ const state = {
   activeFile: null,
   activeContent: '',
   treeIndex: null,
+  virtualFile: null, // { item, blocks } when browsing codeblocks inside a file
+  codeBlocksCache: new Map(), // path -> { content, blocks }
   settings: {
     lastRepoUrl: '',
     githubToken: '',
@@ -51,6 +56,7 @@ const elements = {
   activeFileName: document.getElementById('activeFileName'),
   activeFileMeta: document.getElementById('activeFileMeta'),
   codeScrollBox: document.getElementById('codeScrollBox'),
+  openAsFolderBtn: document.getElementById('openAsFolderBtn'),
   copyCodeBtn: document.getElementById('copyCodeBtn'),
   highlightAllBtn: document.getElementById('highlightAllBtn'),
   toast: document.getElementById('plToast')
@@ -66,6 +72,27 @@ function showNotice(msg, isError = false) {
   toastTimer = setTimeout(() => {
     elements.toast.hidden = true;
   }, 2800);
+}
+
+function isMarkdownLike(filename) {
+  if (!filename) return false;
+  const ext = getFileExtension(filename);
+  return MARKDOWN_EXTENSIONS.has(ext) || filename.toLowerCase().startsWith('readme');
+}
+
+function resetPreview(emptyMessage = 'Click a text file above to preview and copy its contents.') {
+  state.activeFile = null;
+  state.activeContent = '';
+  elements.activeFileName.textContent = 'No file selected';
+  elements.activeFileMeta.textContent = '';
+  elements.openAsFolderBtn.hidden = true;
+  elements.copyCodeBtn.disabled = true;
+  elements.highlightAllBtn.disabled = true;
+  elements.codeScrollBox.innerHTML = `
+    <div class="pl-empty-state">
+      <p>${escapeHtml(emptyMessage)}</p>
+    </div>
+  `;
 }
 
 async function init() {
@@ -95,12 +122,17 @@ async function init() {
       });
       state.treeIndex = buildTreeIndex(treeResult.tree, isTextFile);
       updateRateLimit(treeResult.rateLimit);
-      loadDirectoryFromIndex(state.currentPath, false);
-
-      if (session.activeFile) {
-        await selectFile(session.activeFile, true);
-      }
     } catch {
+      // Fall back to directory loader below if tree fails
+    }
+
+    if (session.virtualFileItem) {
+      await openFileAsFolder(session.virtualFileItem, false);
+      if (session.activeFile && session.activeFile.type === 'codeblock' && state.virtualFile) {
+        const block = state.virtualFile.blocks.find(b => b.path === session.activeFile.path);
+        if (block) await selectFile(block, true);
+      }
+    } else {
       await loadDirectory(state.currentPath, false);
       if (session.activeFile) {
         await selectFile(session.activeFile, true);
@@ -119,6 +151,13 @@ function persistCurrentSession() {
     repo: state.repo,
     ref: state.ref,
     currentPath: state.currentPath,
+    virtualFileItem: state.virtualFile ? {
+      name: state.virtualFile.item.name,
+      path: state.virtualFile.item.path,
+      type: state.virtualFile.item.type,
+      size: state.virtualFile.item.size,
+      downloadUrl: state.virtualFile.item.downloadUrl
+    } : null,
     activeFile: state.activeFile ? {
       name: state.activeFile.name,
       path: state.activeFile.path,
@@ -156,6 +195,11 @@ function attachEventListeners() {
   elements.upDirBtn.addEventListener('click', navigateUp);
   elements.fileFilterInput.addEventListener('input', () => filterItems(elements.fileFilterInput.value));
 
+  elements.openAsFolderBtn.addEventListener('click', () => {
+    if (state.activeFile && state.activeFile.type === 'file') {
+      openFileAsFolder(state.activeFile, true);
+    }
+  });
   elements.copyCodeBtn.addEventListener('click', handleManualCopy);
   elements.highlightAllBtn.addEventListener('click', handleHighlightAll);
 }
@@ -172,6 +216,9 @@ async function loadRepository(input) {
     state.repo = parsed.repo;
     state.currentPath = parsed.path || '';
     state.ref = parsed.ref || '';
+    state.virtualFile = null;
+    state.treeIndex = null;
+    state.codeBlocksCache.clear();
 
     elements.fileListContainer.innerHTML = `
       <div class="pl-empty-state">
@@ -221,20 +268,9 @@ async function loadRepository(input) {
 }
 
 function loadDirectoryFromIndex(path, clearActive = true) {
+  state.virtualFile = null;
   state.currentPath = path;
-  if (clearActive) {
-    state.activeFile = null;
-    state.activeContent = '';
-    elements.activeFileName.textContent = 'No file selected';
-    elements.activeFileMeta.textContent = '';
-    elements.copyCodeBtn.disabled = true;
-    elements.highlightAllBtn.disabled = true;
-    elements.codeScrollBox.innerHTML = `
-      <div class="pl-empty-state">
-        <p>Click a text file above to preview and copy its contents.</p>
-      </div>
-    `;
-  }
+  if (clearActive) resetPreview();
   elements.fileFilterInput.value = '';
 
   const items = getItemsInPath(state.treeIndex, state.currentPath);
@@ -246,25 +282,14 @@ function loadDirectoryFromIndex(path, clearActive = true) {
 }
 
 async function loadDirectory(path, clearActive = true) {
+  state.virtualFile = null;
   if (state.treeIndex) {
     loadDirectoryFromIndex(path, clearActive);
     return;
   }
 
   state.currentPath = path;
-  if (clearActive) {
-    state.activeFile = null;
-    state.activeContent = '';
-    elements.activeFileName.textContent = 'No file selected';
-    elements.activeFileMeta.textContent = '';
-    elements.copyCodeBtn.disabled = true;
-    elements.highlightAllBtn.disabled = true;
-    elements.codeScrollBox.innerHTML = `
-      <div class="pl-empty-state">
-        <p>Click a text file above to preview and copy its contents.</p>
-      </div>
-    `;
-  }
+  if (clearActive) resetPreview();
   elements.fileFilterInput.value = '';
 
   elements.fileListContainer.innerHTML = `
@@ -316,6 +341,73 @@ async function loadDirectory(path, clearActive = true) {
   }
 }
 
+/**
+ * Fetches (or retrieves from cache) a file's text and extracted code blocks.
+ */
+async function getOrFetchFileWithBlocks(item) {
+  const cached = state.codeBlocksCache.get(item.path);
+  if (cached) return cached;
+
+  const { content, rateLimit } = await fetchFileContent({
+    owner: state.owner,
+    repo: state.repo,
+    path: item.path,
+    ref: state.ref,
+    downloadUrl: item.downloadUrl,
+    token: state.settings.githubToken
+  });
+  updateRateLimit(rateLimit);
+
+  const blocks = extractCodeBlocks(content);
+  const entry = { content, blocks };
+  state.codeBlocksCache.set(item.path, entry);
+  return entry;
+}
+
+/**
+ * Opens a file as a virtual folder listing all code blocks inside it.
+ */
+async function openFileAsFolder(item, clearActive = true) {
+  elements.fileFilterInput.value = '';
+  elements.fileListContainer.innerHTML = `
+    <div class="pl-empty-state">
+      <p>Scanning for code blocks...</p>
+    </div>
+  `;
+
+  try {
+    const { blocks } = await getOrFetchFileWithBlocks(item);
+
+    if (blocks.length === 0) {
+      showNotice(`No code blocks found in "${item.name}".`, true);
+      // Restore current directory view cleanly
+      if (state.currentItems.length > 0) {
+        renderDirectoryItems(state.currentItems);
+      } else {
+        const parentPath = item.path.split('/').slice(0, -1).join('/');
+        await loadDirectory(parentPath, clearActive);
+      }
+      return;
+    }
+
+    state.virtualFile = { item, blocks };
+    state.currentPath = item.path;
+    state.currentItems = blocks;
+
+    if (clearActive) {
+      resetPreview('Click a code block above to preview and copy it.');
+    }
+
+    renderDirectoryItems(blocks);
+    renderBreadcrumbs();
+    elements.breadcrumbBar.hidden = false;
+    persistCurrentSession();
+  } catch (err) {
+    showNotice(`Failed to scan file: ${err.message}`, true);
+    renderDirectoryItems(state.currentItems);
+  }
+}
+
 function renderDirectoryItems(items) {
   elements.itemsCountBadge.textContent = `${items.length} ${items.length === 1 ? 'item' : 'items'}`;
 
@@ -332,7 +424,8 @@ function renderDirectoryItems(items) {
 
   items.forEach(item => {
     const row = document.createElement('div');
-    row.className = `pl-file-item ${item.type === 'dir' ? 'is-dir' : 'is-file'}`;
+    const typeClass = item.type === 'dir' ? 'is-dir' : (item.type === 'codeblock' ? 'is-codeblock' : 'is-file');
+    row.className = `pl-file-item ${typeClass}`;
     row.dataset.path = item.path;
 
     if (state.activeFile && state.activeFile.path === item.path) {
@@ -340,7 +433,7 @@ function renderDirectoryItems(items) {
     }
 
     const iconSpan = document.createElement('span');
-    iconSpan.textContent = item.type === 'dir' ? '📁' : '📄';
+    iconSpan.textContent = item.type === 'dir' ? '📁' : (item.type === 'codeblock' ? '🧩' : '📄');
 
     const nameSpan = document.createElement('span');
     nameSpan.className = 'pl-item-name';
@@ -350,6 +443,23 @@ function renderDirectoryItems(items) {
     row.appendChild(nameSpan);
 
     if (item.type === 'file') {
+      const cached = state.codeBlocksCache.get(item.path);
+      const hasKnownBlocks = cached && cached.blocks.length > 0;
+      const showFolderPill = hasKnownBlocks || (!cached && isMarkdownLike(item.name));
+
+      if (showFolderPill) {
+        const folderBtn = document.createElement('button');
+        folderBtn.type = 'button';
+        folderBtn.className = 'pl-folder-pill';
+        folderBtn.textContent = hasKnownBlocks ? `📂 ${cached.blocks.length}` : '📂';
+        folderBtn.title = 'Open code blocks as folder';
+        folderBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openFileAsFolder(item, true);
+        });
+        row.appendChild(folderBtn);
+      }
+
       const ext = getFileExtension(item.name);
       if (ext) {
         const badge = document.createElement('span');
@@ -357,6 +467,12 @@ function renderDirectoryItems(items) {
         badge.textContent = ext;
         row.appendChild(badge);
       }
+    } else if (item.type === 'codeblock') {
+      const tag = item.rawLang || item.lang || 'text';
+      const badge = document.createElement('span');
+      badge.className = 'pl-file-badge';
+      badge.textContent = tag;
+      row.appendChild(badge);
     }
 
     row.addEventListener('click', () => {
@@ -387,6 +503,7 @@ async function selectFile(item, isRestoring = false) {
   state.activeFile = item;
   elements.activeFileName.textContent = item.name;
   elements.activeFileMeta.textContent = 'Loading...';
+  elements.openAsFolderBtn.hidden = true;
   elements.copyCodeBtn.disabled = true;
   elements.highlightAllBtn.disabled = true;
 
@@ -401,23 +518,39 @@ async function selectFile(item, isRestoring = false) {
   `;
 
   try {
-    const { content, rateLimit } = await fetchFileContent({
-      owner: state.owner,
-      repo: state.repo,
-      path: item.path,
-      ref: state.ref,
-      downloadUrl: item.downloadUrl,
-      token: state.settings.githubToken
-    });
+    let content = '';
+    let lang = 'text';
+    let blocks = [];
 
-    updateRateLimit(rateLimit);
+    if (item.type === 'codeblock') {
+      content = item.content;
+      lang = item.lang || 'text';
+    } else {
+      const entry = await getOrFetchFileWithBlocks(item);
+      content = entry.content;
+      blocks = entry.blocks;
+      lang = detectLanguage(item.name);
+
+      // Refresh directory row so 📂 N pill appears if code blocks were found
+      if (!state.virtualFile && blocks.length > 0) {
+        renderDirectoryItems(
+          elements.fileFilterInput.value
+            ? state.currentItems.filter(i => i.name.toLowerCase().includes(elements.fileFilterInput.value.trim().toLowerCase()))
+            : state.currentItems
+        );
+      }
+    }
+
     state.activeContent = content;
 
-    const lang = detectLanguage(item.name);
     const { html, lineCount } = renderCodeWithLineNumbers(content, lang);
-
     elements.codeScrollBox.innerHTML = html;
     elements.activeFileMeta.textContent = `(${lineCount} lines, ${formatBytes(item.size || content.length)})`;
+
+    if (blocks.length > 0) {
+      elements.openAsFolderBtn.textContent = `📂 ${blocks.length}`;
+      elements.openAsFolderBtn.hidden = false;
+    }
 
     elements.copyCodeBtn.disabled = false;
     elements.highlightAllBtn.disabled = false;

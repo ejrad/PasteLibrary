@@ -3,6 +3,7 @@ import { parseGitHubUrl } from '../modules/githubApi.js';
 import { renderCodeWithLineNumbers } from '../modules/highlighter.js';
 import { saveSession, loadSession, clearSession } from '../modules/storage.js';
 import { buildTreeIndex, getItemsInPath } from '../modules/treeIndex.js';
+import { extractCodeBlocks } from '../modules/codeBlocks.js';
 
 let passed = 0;
 let failed = 0;
@@ -99,6 +100,59 @@ assert(srcItems.some(i => i.name === 'index.js' && i.type === 'file'), 'src has 
 // Nested subdirectory items
 const utilsItems = getItemsInPath(index, 'src/utils');
 assert(utilsItems.length === 1 && utilsItems[0].name === 'math.lua', 'src/utils has math.lua');
+
+// Test codeBlocks extraction
+const sampleMd = [
+  '# Title',
+  'Some text with `inline` code.',
+  '```js',
+  'const x = 1;',
+  'console.log(x);',
+  '```',
+  '~~~lua',
+  'local y = 2',
+  '~~~',
+  '```',
+  'plain block',
+  '```'
+].join('\n');
+
+const blocks = extractCodeBlocks(sampleMd);
+assert(blocks.length === 3, 'Extracted 3 fenced code blocks');
+assert(blocks[0].lang === 'javascript' && blocks[0].content.includes('const x = 1;'), 'Parsed js block');
+assert(blocks[1].lang === 'lua' && blocks[1].content === 'local y = 2', 'Parsed tilde lua block');
+assert(blocks[2].lang === 'text' && blocks[2].content === 'plain block', 'Parsed untagged block');
+
+// Test isolated title detection above code blocks
+const titledMd = [
+  'Elevated PowerShell:',
+  '```powershell',
+  'tar -xzf wazuh-agent-windows.tar.gz',
+  '```',
+  '',
+  '### Linux Setup',
+  '```bash',
+  'sudo apt update',
+  '```',
+  '',
+  'Run this command to verify the installation.',
+  '```bash',
+  'systemctl status wazuh-agent',
+  '```',
+  '',
+  'First paragraph line',
+  'Not isolated line:',
+  '```sh',
+  'echo hi',
+  '```'
+].join('\n');
+
+const titledBlocks = extractCodeBlocks(titledMd);
+assert(titledBlocks.length === 4, 'Extracted 4 blocks from titledMd');
+assert(titledBlocks[0].name === 'Elevated PowerShell', 'Used isolated colon title above block');
+assert(titledBlocks[1].name === 'Linux Setup', 'Used markdown heading directly above block');
+assert(titledBlocks[2].name.startsWith('#3 ·'), 'Ignored sentence ending with period');
+assert(titledBlocks[3].name.startsWith('#4 ·'), 'Ignored non-isolated line');
 
 console.log(`\nTests finished: ${passed} passed, ${failed} failed.`);
 if (failed > 0) process.exit(1);
